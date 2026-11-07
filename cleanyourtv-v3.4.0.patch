@@ -1,0 +1,1257 @@
+diff --git a/launcher/app/build.gradle b/launcher/app/build.gradle
+index a7f0477..33b066c 100644
+--- a/launcher/app/build.gradle
++++ b/launcher/app/build.gradle
+@@ -30,6 +30,7 @@ android {
+ 
+     packagingOptions {
+         resources {
++            excludes += ['META-INF/versions/9/OSGI-INF/MANIFEST.MF']
+             // Kotlin metadata pulled in by AndroidX's dependencies. This launcher is plain Java and never reads it;
+             // leaving it out saves about 14 KB of every install.
+             excludes += ['kotlin/**', 'META-INF/*.version', 'META-INF/*.kotlin_module', 'DebugProbesKt.bin']
+@@ -45,6 +46,11 @@ android {
+ dependencies {
+     implementation 'androidx.recyclerview:recyclerview:1.3.2'
+     implementation 'androidx.dynamicanimation:dynamicanimation:1.0.0'
++    implementation('com.github.MuntashirAkon:libadb-android:3.1.1') {
++        exclude group: 'org.bouncycastle', module: 'bcprov-jdk15to18'
++        exclude group: 'com.github.MuntashirAkon.spake2-java', module: 'spake2-android'
++    }
++    implementation 'org.bouncycastle:bcpkix-jdk18on:1.81'
+     // Test only (never in the APK): plain JVM tests for the module card validators, src/test.
+     testImplementation 'junit:junit:4.13.2'
+ }
+diff --git a/launcher/app/src/main/AndroidManifest.xml b/launcher/app/src/main/AndroidManifest.xml
+index ca18afa..2ac0640 100644
+--- a/launcher/app/src/main/AndroidManifest.xml
++++ b/launcher/app/src/main/AndroidManifest.xml
+@@ -9,6 +9,7 @@
+ 
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
++    <uses-permission android:name="android.permission.INTERNET" />
+     <!-- Needed since Android 10 to read the Wi-Fi network name for the network pill. Never requested at
+          runtime: build-and-install grants it with pm grant, so lint's Android 12 "ask for COARSE with
+          FINE" rule does not apply here. -->
+@@ -231,6 +232,11 @@
+                 <action android:name="android.service.notification.NotificationListenerService" />
+             </intent-filter>
+         </service>
++        <receiver
++            android:name=".StandbyCleanupReceiver"
++            android:exported="true"
++            android:permission="android.permission.DUMP" />
++
+         <receiver
+             android:name=".GuardConfig"
+             android:exported="true"
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+index 555fd4c..053157a 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+@@ -174,6 +174,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+     private final Context ctx;
+     private final int rowsBelowDock;
+     private final boolean dockTitle;
++    private final boolean fixedShelfTitle;
+     /** The owner's saved order (reorder button, Order): key -> rank. Empty when there is none or it no longer applies. */
+     private Map<String, Integer> savedRanks = Collections.emptyMap();
+     /** Dock size recorded with the saved order (Order.docked), or -1: then dock_apps says which tiles are docked. */
+@@ -237,7 +238,8 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+         this.reducedMotion = cfg.reducedMotion;
+         this.focusOvershoot = cfg.focusOvershoot;
+         this.rowsBelowDock = cfg.rowsBelowDock;
+-        this.dockTitle = cfg.dockTitle;
++        this.fixedShelfTitle = cfg.dockTitle && cfg.focusRowShelf;
++        this.dockTitle = cfg.dockTitle && !fixedShelfTitle;
+         this.dockRow = cfg.dockRow;
+         this.singleRow = cfg.singleRow;
+         this.restNameAlpha = cfg.alwaysShowNames ? 0.75f : 0f;
+@@ -478,7 +480,7 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
+         // The dock has no labels, unless always_show_names asks for them (DockDecoration then makes room in the band).
+         // In a single row every tile is the dock's kind: the big title above names it.
+         boolean dockKind = DockSlots.inDockRow(dockRow, singleRow, position, dockSize);
+-        h.name.setVisibility(dockKind && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE);
++        h.name.setVisibility((dockKind || fixedShelfTitle) && restNameAlpha == 0f ? View.INVISIBLE : View.VISIBLE);
+         h.inDock = dockKind;
+         boolean focused = h.card.isFocused();   // a rebind after reload() can hit the focused tile
+         h.name.setAlpha(focused ? 1f : restNameAlpha);
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/Config.java b/launcher/app/src/main/java/com/gathin/tvhome/Config.java
+index feb5a81..eaf91e6 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/Config.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/Config.java
+@@ -140,6 +140,7 @@ final class Config {
+     final boolean glowSnap;
+     /** App library as a round button in the top bar (config.xml library_button); needs app_library. */
+     final boolean libraryButton;
++    final boolean libraryBeforeWifi;
+     /** The App library pill after the last Home row; false hides it while libraryButton is on (show_library_pill). */
+     final boolean showLibraryPill;
+     /** With icon_only_buttons, the Wi-Fi pill keeps the network name up to this width in dp (0: icon only). */
+@@ -234,6 +235,7 @@ final class Config {
+     final boolean dockEvenPadding;
+     /** The dock band and its edge draw (dock_band); false leaves the tiles floating on the wallpaper. */
+     final boolean dockBand;
++    final boolean focusRowShelf;
+     /** The dock position dots under the cinematic shelf's name (config.xml, cinematic_dots); false leaves them out. */
+     final boolean cinematicDots;
+     /** The cinematic shelf keeps the white focus highlight instead of the app's colour (config.xml, cinematic_white_focus). */
+@@ -283,14 +285,14 @@ final class Config {
+                    Map<String, String> appBanners, String sourcePanelService, String sourcePanelAction,
+                    String sourcePanelExtra, boolean coocaaSources, String inputAction, List<String> inputSources,
+                    String inputUriScheme, int columns, int rowsBelowDock, boolean animations, boolean advancedEffects,
+-                   boolean shamsiDate, String greetingName, boolean moduleCards, boolean reducedMotion, boolean bootToLiveTv, boolean openOnStartChoice, boolean dockTitle, boolean dockRow, boolean topMenu, boolean launcherSettingsButton, boolean reorderButton, boolean showNetworkPill, boolean showInputsPill, boolean iconOnlyButtons, boolean iconOnlyInputs, boolean libraryButton, boolean showLibraryPill, int wifiLabelWidth, boolean alwaysShowNames, boolean wallpaperTrueColor, boolean focusOvershoot, String vpnApp,
++                   boolean shamsiDate, String greetingName, boolean moduleCards, boolean reducedMotion, boolean bootToLiveTv, boolean openOnStartChoice, boolean dockTitle, boolean dockRow, boolean topMenu, boolean launcherSettingsButton, boolean reorderButton, boolean showNetworkPill, boolean showInputsPill, boolean iconOnlyButtons, boolean iconOnlyInputs, boolean libraryButton, boolean libraryBeforeWifi, boolean showLibraryPill, int wifiLabelWidth, boolean alwaysShowNames, boolean wallpaperTrueColor, boolean focusOvershoot, String vpnApp,
+                    boolean showHomeSettingsShortcut, boolean showStats, String gameDay, boolean appLibrary, boolean appLibrarySelection, boolean libraryOkOpens, boolean uniformTiles, int backgroundColor, int skyIntensity,
+                    int[] settingsKeycodes, boolean settingsKeyPanel, boolean restoreKeyServices, boolean wallpaperEnabled, File wallpaper, List<File> wallpapers,
+                    int wallpaperRotationMinutes, int wallpaperDim, int dockOpacity, String wallpaperOrder, boolean overlayApplied,
+                    Festival festival, int[] inputKeycodes, List<String> appKeys, String stockHomeRedirect,
+                    List<RaceWeekend.Race> raceCalendar, boolean cinematicHome, boolean ambientGlow, boolean appGlow, boolean fadeRows, int homeIdleClockMinutes,
+                    boolean keyFilter, boolean dockGlass, String glowStyle, boolean wallpaperCaptions,
+-                   boolean handleViewInputs, boolean tileMenu, boolean dockEvenPadding, boolean dockBand, boolean cinematicDots, boolean cinematicWhiteFocus, boolean wifiStatusColor, int cinematicScrim, int cinematicArt,
++                   boolean handleViewInputs, boolean tileMenu, boolean dockEvenPadding, boolean dockBand, boolean focusRowShelf, boolean cinematicDots, boolean cinematicWhiteFocus, boolean wifiStatusColor, int cinematicScrim, int cinematicArt,
+                    Map<String, Set<String>> wallpaperMoods, boolean gamepadPassthrough, boolean consumeVolumeKeys, boolean powerOnHome, boolean homeLongPressHome, boolean wifiStatusWarnings, List<String> topBarApps, boolean showGreeting, boolean headerWhite, boolean clockWallpaper, int clockWallpaperDim, boolean clockGlow, String glassStyle, boolean singleRow, boolean dockBandAll, boolean lunarDate, int lunarUtcOffset, boolean dateBelowClock, boolean vpnPill, String locale, boolean powerOnHomeAlways, boolean inputsConnectedOnly, boolean inputsCecStateOnly,
+                    int openOnStartNetworkWait, boolean openOnStartOnWake, boolean iconOnlyVpn, String clockFormat, boolean backOpensClock, boolean glowSnap) {
+         this.handleViewInputs = handleViewInputs;
+@@ -345,6 +347,7 @@ final class Config {
+         this.backOpensClock = backOpensClock;
+         this.glowSnap = glowSnap;
+         this.libraryButton = libraryButton;
++        this.libraryBeforeWifi = libraryBeforeWifi;
+         this.showLibraryPill = showLibraryPill;
+         this.wifiLabelWidth = wifiLabelWidth;
+         this.alwaysShowNames = alwaysShowNames;
+@@ -381,6 +384,7 @@ final class Config {
+         this.dockGlass = dockGlass;
+         this.dockEvenPadding = dockEvenPadding;
+         this.dockBand = dockBand;
++        this.focusRowShelf = focusRowShelf && dockRow && !singleRow;
+         this.cinematicDots = cinematicDots;
+         this.cinematicWhiteFocus = cinematicWhiteFocus;
+         this.wifiStatusColor = wifiStatusColor;
+@@ -476,6 +480,7 @@ final class Config {
+         boolean backOpensClock = res.getBoolean(R.bool.back_opens_clock);
+         boolean glowSnap = res.getBoolean(R.bool.glow_snap);
+         boolean libraryButton = res.getBoolean(R.bool.library_button);
++        boolean libraryBeforeWifi = res.getBoolean(R.bool.library_before_wifi);
+         boolean showLibraryPill = res.getBoolean(R.bool.show_library_pill);
+         int wifiLabelWidth = res.getInteger(R.integer.wifi_label_width);
+         boolean alwaysShowNames = res.getBoolean(R.bool.always_show_names);
+@@ -517,6 +522,7 @@ final class Config {
+         boolean dockGlass = res.getBoolean(R.bool.dock_glass);
+         boolean dockEvenPadding = res.getBoolean(R.bool.dock_even_padding);
+         boolean dockBand = res.getBoolean(R.bool.dock_band);
++        boolean focusRowShelf = res.getBoolean(R.bool.focus_row_shelf);
+         boolean cinematicDots = res.getBoolean(R.bool.cinematic_dots);
+         boolean cinematicWhiteFocus = res.getBoolean(R.bool.cinematic_white_focus);
+         boolean wifiStatusColor = res.getBoolean(R.bool.wifi_status_color);
+@@ -590,6 +596,7 @@ final class Config {
+             backOpensClock = bool(json, "back_opens_clock", backOpensClock);
+             glowSnap = bool(json, "glow_snap", glowSnap);
+             libraryButton = bool(json, "library_button", libraryButton);
++            libraryBeforeWifi = bool(json, "library_before_wifi", libraryBeforeWifi);
+             showLibraryPill = bool(json, "show_library_pill", showLibraryPill);
+             wifiLabelWidth = integer(json, "wifi_label_width", wifiLabelWidth, 0, 300);
+             alwaysShowNames = bool(json, "always_show_names", alwaysShowNames);
+@@ -631,6 +638,7 @@ final class Config {
+             dockGlass = bool(json, "dock_glass", dockGlass);
+             dockEvenPadding = bool(json, "dock_even_padding", dockEvenPadding);
+             dockBand = bool(json, "dock_band", dockBand);
++            focusRowShelf = bool(json, "focus_row_shelf", focusRowShelf);
+             cinematicDots = bool(json, "cinematic_dots", cinematicDots);
+             cinematicWhiteFocus = bool(json, "cinematic_white_focus", cinematicWhiteFocus);
+             wifiStatusColor = bool(json, "wifi_status_color", wifiStatusColor);
+@@ -705,13 +713,13 @@ final class Config {
+                 packageMap(appBanners), panelService, panelAction, panelExtra, coocaaSources, inputAction, inputSources, inputUriScheme, Math.max(1, columns),
+                 Math.max(0, rowsBelow), animations, advancedEffects, shamsi, greetingName, moduleCards, reducedMotion, bootToLiveTv,
+                 openOnStartChoice, dockTitle, dockRow, topMenu, launcherSettingsButton, reorderButton, showNetworkPill, showInputsPill,
+-                iconOnlyButtons, iconOnlyInputs, libraryButton, showLibraryPill, wifiLabelWidth, alwaysShowNames, wallpaperTrueColor, focusOvershoot,
++                iconOnlyButtons, iconOnlyInputs, libraryButton, libraryBeforeWifi, showLibraryPill, wifiLabelWidth, alwaysShowNames, wallpaperTrueColor, focusOvershoot,
+                 vpn, homeSettings, showStats, gameDay, library, librarySelection, libraryOkOpens, uniformTiles, background,
+                 Math.max(0, Math.min(100, skyIntensity)), settingsKeycodes, settingsKeyPanel, restoreKeyServices, wallpaperEnabled, wallpaper,
+                 wallpapers, rotationMinutes, wallpaperDim, dockOpacity, wallpaperOrder, applied, festival, inputKeycodes, appKeys, stockHomeRedirect,
+                 json == null ? Collections.emptyList() : raceCalendar(json), cinematic, ambientGlow, appGlow, fadeRows,
+                 Math.max(0, idleClockMinutes), keyFilter, dockGlass, glowStyle, wallpaperCaptions, handleViewInputs, tileMenu, dockEvenPadding,
+-                dockBand, cinematicDots, cinematicWhiteFocus, wifiStatusColor, cinematicScrim, cinematicArt, wallpaperMoods, gamepadPassthrough,
++                dockBand, focusRowShelf, cinematicDots, cinematicWhiteFocus, wifiStatusColor, cinematicScrim, cinematicArt, wallpaperMoods, gamepadPassthrough,
+                 consumeVolumeKeys, powerOnHome, homeLongPressHome, wifiStatusWarnings, topBarApps, showGreeting, headerWhite, clockWallpaper,
+                 Math.max(0, Math.min(90, clockWallpaperDim)), clockGlow, glassStyle, singleRow && dockRow, dockBandAll, lunar, lunarOffset,
+                 dateBelowClock, vpnPill, locale, powerOnHomeAlways, inputsConnectedOnly, inputsCecStateOnly,
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/DockDecoration.java b/launcher/app/src/main/java/com/gathin/tvhome/DockDecoration.java
+index fe821b9..fd6fcf0 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/DockDecoration.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/DockDecoration.java
+@@ -1,7 +1,9 @@
+ package com.gathin.tvhome;
+ 
++import android.animation.ValueAnimator;
+ import android.graphics.Canvas;
+ import android.graphics.LinearGradient;
++import android.graphics.Matrix;
+ import android.graphics.Paint;
+ import android.graphics.Rect;
+ import android.graphics.RectF;
+@@ -11,7 +13,7 @@ import android.view.View;
+ import androidx.annotation.NonNull;
+ import androidx.recyclerview.widget.RecyclerView;
+ 
+-/** Draws the tvOS style lighter band behind the first (dock) row and adds a gap below it. */
++/** Draws the glass band behind the dock or the focused row. */
+ public class DockDecoration extends RecyclerView.ItemDecoration {
+ 
+     private final int dockSize;
+@@ -19,6 +21,8 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
+     private final Paint band = new Paint(Paint.ANTI_ALIAS_FLAG);
+     private final Paint edge = new Paint(Paint.ANTI_ALIAS_FLAG);
+     private final RectF rect = new RectF();
++    private final RectF nextRect = new RectF();
++    private final Matrix glassTransform = new Matrix();
+ 
+     /** Extra band below the tiles for their names (always_show_names), in px. */
+     private final float namesRoom;
+@@ -26,14 +30,19 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
+     private final boolean lightGlass;
+     /** Padding all round the tiles equal to the gap between them (config.xml dock_even_padding). */
+     private final boolean evenPadding;
+-    /** The band's top and bottom the glass gradient was made for; it is remade when they move. */
+-    private float shaderTop = Float.NaN, shaderBottom = Float.NaN;
++    /** Cache the gradient by height and translate it with the moving band. */
++    private float shaderHeight = Float.NaN;
++    private Shader glassShader;
+     /** Draw the band and its edge (config.xml dock_band); false leaves the tiles floating on the wallpaper. */
+     private final boolean bandVisible;
+     /** single_row: the tiles after the dock share its row, so they take the same offsets to stay level with it. */
+     private final boolean singleRow;
+     /** dock_band_all: in a single row, the band runs behind every app instead of the dock apps only. */
+     private final boolean bandAll;
++    private final boolean followRows;
++    private int focusRow;
++    private float drawnRow;
++    private ValueAnimator rowAnimator;
+ 
+     /**
+      * @param translucent the cinematic shelf's band: the artwork and the glow show through it.
+@@ -44,12 +53,14 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
+      * @param bandVisible false skips the band and its edge, so the tiles float on the wallpaper (dock_band).
+      * @param singleRow   every app sits in the dock's row (single_row); the band covers the dock apps only, unless bandAll.
+      * @param bandAll     with singleRow, the band runs behind every app in the row (dock_band_all).
++     * @param followRows follow the focused row in a vertical grid (focus_row_shelf).
+      */
+     DockDecoration(int dockSize, float density, boolean translucent, boolean names, int opacity, boolean lightGlass,
+-                   boolean evenPadding, boolean bandVisible, boolean singleRow, boolean bandAll) {
++                   boolean evenPadding, boolean bandVisible, boolean singleRow, boolean bandAll, boolean followRows) {
+         this.dockSize = dockSize;
+         this.singleRow = singleRow;
+         this.bandAll = singleRow && bandAll;
++        this.followRows = followRows && !singleRow;
+         this.density = density;
+         this.namesRoom = names ? 22 * density : 0;
+         this.lightGlass = lightGlass;
+@@ -61,6 +72,26 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
+         edge.setColor(lightGlass ? 0x38FFFFFF : translucent ? 0x26FFFFFF : 0x1FFFFFFF);
+     }
+ 
++    void focusTile(RecyclerView grid, int position, boolean animated) {
++        if (!bandVisible || !followRows) return;
++        int row = position / dockSize;
++        if (row == focusRow) return;
++        focusRow = row;
++        if (rowAnimator != null) rowAnimator.cancel();
++        if (!animated) {
++            drawnRow = row;
++            grid.invalidate();
++            return;
++        }
++        rowAnimator = ValueAnimator.ofFloat(drawnRow, row);
++        rowAnimator.setDuration(180);
++        rowAnimator.addUpdateListener(animation -> {
++            drawnRow = (float) animation.getAnimatedValue();
++            grid.invalidate();
++        });
++        rowAnimator.start();
++    }
++
+     /** Concentric corners: the band's radius is the tiles' radius plus the band's padding around them. */
+     static float radiusPx(float tileRadiusPx, float paddingPx) {
+         return tileRadiusPx + paddingPx;
+@@ -88,28 +119,36 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
+     @Override
+     public void onDraw(@NonNull Canvas c, @NonNull RecyclerView parent, @NonNull RecyclerView.State state) {
+         if (!bandVisible) return;
+-        boolean any = false;
++        rect.setEmpty();
++        nextRect.setEmpty();
++        int row = (int) drawnRow;
++        float fraction = drawnRow - row;
+         int cardWidth = 0;
+         for (int i = 0; i < parent.getChildCount(); i++) {
+             View child = parent.getChildAt(i);
+             int pos = parent.getChildAdapterPosition(child);
+-            if (pos < 0 || (!bandAll && pos >= dockSize)) continue;
++            if (pos < 0 || (!followRows && !bandAll && pos >= dockSize)) continue;
++            int tileRow = pos / dockSize;
++            if (followRows && tileRow != row && (fraction == 0f || tileRow != row + 1)) continue;
+             RecyclerView.ViewHolder vh = parent.getChildViewHolder(child);
+             View card = vh instanceof AppAdapter.Holder ? ((AppAdapter.Holder) vh).card : child.findViewById(R.id.card);
+-            if (card == null) continue;
++            if (card == null || (followRows && card.getVisibility() != View.VISIBLE)) continue;
+             float l = child.getLeft() + card.getLeft();
+             float t = child.getTop() + card.getTop() + child.getTranslationY();
+             float r = l + card.getWidth();
+             float b = t + card.getHeight();
+             cardWidth = card.getWidth();
+-            if (!any) {
+-                rect.set(l, t, r, b);
+-                any = true;
+-            } else {
+-                rect.union(l, t, r, b);
+-            }
++            RectF bounds = followRows && tileRow != row ? nextRect : rect;
++            bounds.union(l, t, r, b);
++        }
++        if (rect.isEmpty()) rect.set(nextRect);
++        else if (!nextRect.isEmpty()) {
++            rect.left += (nextRect.left - rect.left) * fraction;
++            rect.top += (nextRect.top - rect.top) * fraction;
++            rect.right += (nextRect.right - rect.right) * fraction;
++            rect.bottom += (nextRect.bottom - rect.bottom) * fraction;
+         }
+-        if (!any) return;
++        if (rect.isEmpty()) return;
+         float pad = 14 * density;
+         // The band can only draw inside the grid, and the first and last dock tiles sit 12dp in from its
+         // edges: a full 14dp at the sides sliced the rounded ends flat (#454). Keep the sides, with the
+@@ -139,12 +178,15 @@ public class DockDecoration extends RecyclerView.ItemDecoration {
+             rect.right = Math.min(rect.right, parent.getWidth() - density);
+         }
+         rect.bottom += namesRoom;
+-        if (lightGlass && (rect.top != shaderTop || rect.bottom != shaderBottom)) {
+-            // The pills' glass (pill_bg: white, 18% fading to 8%), a little fainter over this much larger area.
+-            band.setShader(new LinearGradient(0, rect.top, 0, rect.bottom, 0x24FFFFFF, 0x0DFFFFFF,
+-                    Shader.TileMode.CLAMP));
+-            shaderTop = rect.top;
+-            shaderBottom = rect.bottom;
++        if (lightGlass) {
++            float height = rect.height();
++            if (height != shaderHeight) {
++                glassShader = new LinearGradient(0, 0, 0, height, 0x24FFFFFF, 0x0DFFFFFF, Shader.TileMode.CLAMP);
++                band.setShader(glassShader);
++                shaderHeight = height;
++            }
++            glassTransform.setTranslate(0, rect.top);
++            glassShader.setLocalMatrix(glassTransform);
+         }
+         c.drawRoundRect(rect, radius, radius, band);
+         c.drawRoundRect(rect, radius, radius, edge);
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java
+index 60ea401..a0caa8e 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/LauncherSettingsActivity.java
+@@ -37,6 +37,7 @@ public final class LauncherSettingsActivity extends Activity {
+     private TextView wallpaperChoice;
+     private TextView animationsChoice;
+     private TextView advancedChoice;
++    private TextView standbyCleanupChoice;
+     private TextView followThemeChoice;
+     private TextView openOnStartChoice;
+     private int columns;
+@@ -147,6 +148,13 @@ public final class LauncherSettingsActivity extends Activity {
+                         .show();
+             }
+         });
++        standbyCleanupChoice = findViewById(R.id.standbyCleanupChoice);
++        standbyCleanupChoice.setOnClickListener(v -> {
++            StandbyCleanupReceiver.setEnabled(this, !StandbyCleanupReceiver.enabled(this));
++            refresh();
++        });
++        TextView restartCleanup = findViewById(R.id.restartStandbyCleanup);
++        restartCleanup.setOnClickListener(v -> restartStandbyCleanup(restartCleanup));
+         openOnStartChoice = findViewById(R.id.openOnStartChoice);
+         if (config.openOnStartChoice) {
+             openOnStartChoice.setVisibility(View.VISIBLE);
+@@ -285,6 +293,16 @@ public final class LauncherSettingsActivity extends Activity {
+                 choices.getLong(Config.SETTINGS_REVISION_KEY, 0) + 1).apply();
+     }
+ 
++    private void restartStandbyCleanup(TextView row) {
++        row.setEnabled(false);
++        row.setText(R.string.standby_cleanup_starting);
++        StandbyCleanupStarter.reactivate(this, result -> {
++            row.setEnabled(true);
++            row.setText(R.string.standby_cleanup_restart);
++            refresh();
++        });
++    }
++
+     private void setAdvanced(boolean enabled) {
+         advancedEffects = enabled;
+         choices.edit().putBoolean("advanced_effects", enabled).apply();
+@@ -311,6 +329,8 @@ public final class LauncherSettingsActivity extends Activity {
+                 getString(advancedEffects ? R.string.on : R.string.off)));
+         advancedChoice.setEnabled(animations);
+         advancedChoice.setAlpha(animations ? 1f : 0.5f);
++        standbyCleanupChoice.setText(getString(R.string.standby_cleanup_state,
++                getString(StandbyCleanupReceiver.enabled(this) ? R.string.on : R.string.off)));
+         String wallpaperCurrent = choices.getString(Config.WALLPAPER_CHOICE_KEY, null);
+         wallpaperChoice.setText(getString(R.string.wallpaper_state,
+                 "none".equals(wallpaperCurrent) ? getString(R.string.wallpaper_none)
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+index 870ca51..b70b760 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+@@ -182,6 +182,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private boolean advancedEffects;
+     private TextView greeting;
+     private View clockBlock;
++    private StandbyCleanupChip standbyCleanupChip;
+     private View btnInputs;
+     /** config show_inputs_pill: false keeps the Inputs pill hidden even when the TV has inputs. */
+     private boolean showInputsPill = true;
+@@ -259,6 +260,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private boolean reducedMotion;
+     /** config.xml dock_row: the first row is a separate dock (band, parked low, top shelf) rather than plain grid. */
+     private boolean dockRow;
++    private boolean fixedShelfTitle;
++    private DockDecoration dockDecoration;
+     /** config single_row: every app in the dock's row, scrolling sideways, no grid below. */
+     private boolean singleRow;
+     /** The highlight springs past its target (config.xml, focus_overshoot); false goes straight there. */
+@@ -299,9 +302,17 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private final BroadcastReceiver wakeReceiver = new BroadcastReceiver() {
+         @Override
+         public void onReceive(Context context, Intent intent) {
+-            openStartAppOnWake();
++            if (openOnStartOnWake) openStartAppOnWake();
++            if (resumed) standbyCleanupChip.refresh();
++            scheduleStandbyBanner();
+         }
+     };
++    private final SharedPreferences.OnSharedPreferenceChangeListener standbyCleanupListener = (prefs, key) -> {
++        if (StandbyCleanupReceiver.COUNT.equals(key)) scheduleStandbyBanner();
++    };
++    private final Runnable showStandbyBanner = this::displayStandbyBanner;
++    private final Runnable hideStandbyBanner = this::removeStandbyBanner;
++    private TextView standbyBanner;
+     /** hidden_apps as the adapter sees them (config.xml or a theme's config.json): a hidden app gets no card either. */
+     private Set<String> hiddenApps = Collections.emptySet();
+     /** library_excluded_apps: packages the App library catalogue never offers. */
+@@ -476,6 +487,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         advancedEffects = cfg.animations && cfg.advancedEffects;
+         reducedMotion = cfg.reducedMotion;
+         dockRow = cfg.dockRow;
++        fixedShelfTitle = cfg.dockTitle && cfg.focusRowShelf;
+         singleRow = cfg.singleRow;
+         focusOvershoot = cfg.focusOvershoot;
+         festival = cfg.festival;
+@@ -539,6 +551,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         greeting = findViewById(R.id.greeting);
+         clockBlock = findViewById(R.id.leftBlock);
+         clockRefresh = new ClockRefresh(clockBlock);
++        TextView standbyButton = findViewById(R.id.btnStandbyCleanup);
++        standbyCleanupChip = new StandbyCleanupChip(this, standbyButton);
++        if (!getResources().getBoolean(R.bool.rtl_menu_bar)) {
++            LinearLayout.LayoutParams params = (LinearLayout.LayoutParams) standbyButton.getLayoutParams();
++            greeting.setPaddingRelative(greeting.getPaddingStart() + params.width + params.getMarginEnd(),
++                    greeting.getPaddingTop(), greeting.getPaddingEnd(), greeting.getPaddingBottom());
++        }
+         greetingColor = greeting.getCurrentTextColor();
+         if (!cfg.showGreeting) greeting.setVisibility(View.GONE);
+         // Keep the other header layouts as designed: their extra lines change the block's centre.
+@@ -681,8 +700,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             public void onChildViewDetachedFromWindow(@NonNull View v) {
+             }
+         });
+-        if (dockRow) grid.addItemDecoration(new DockDecoration(COLUMNS, density, cinematic, cfg.alwaysShowNames, cfg.dockOpacity, cfg.dockGlass, cfg.dockEvenPadding, cfg.dockBand,
+-                singleRow, cfg.dockBandAll));
++        if (fixedShelfTitle) placeFixedShelf();
++        if (dockRow) {
++            dockDecoration = new DockDecoration(COLUMNS, density, cinematic, cfg.alwaysShowNames, cfg.dockOpacity,
++                    cfg.dockGlass, cfg.dockEvenPadding, cfg.dockBand, singleRow, cfg.dockBandAll, cfg.focusRowShelf);
++            grid.addItemDecoration(dockDecoration);
++        }
+         if (cfg.fadeRows) TopFade.attach(grid, 48 * density);
+         // Reduced motion: the tiles are simply there, with no entrance (reloadApps skips it there too).
+         if (animations && !reducedMotion) {
+@@ -703,17 +726,18 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             int h = b - t;
+             // Item height follows the tile size, which follows the columns and the rows that must fit (AppAdapter.tileWidthPx).
+             int inner = (r - l) - grid.getPaddingLeft() - grid.getPaddingRight();
+-            int tileW = AppAdapter.tileWidthPx(inner, h, COLUMNS, rowsBelowDock, cfg.dockTitle, cfg.dockRow, density);
++            boolean titleInsideGrid = cfg.dockTitle && !fixedShelfTitle;
++            int tileW = AppAdapter.tileWidthPx(inner, h, COLUMNS, rowsBelowDock, titleInsideGrid, cfg.dockRow, density);
+             int itemH = AppAdapter.itemHeightPx(AppAdapter.tileHeightPx(tileW), density);
+             int dockRow = itemH + (int) (AppAdapter.DOCK_EXTRA_DP * density);   // item height plus DockDecoration offsets
+             int gridRows = itemH * rowsBelowDock;
+             // Keep the hero below the header when the library is enabled on a short screen,
+             // even when the theme requests an extra visible row below the dock.
+-            int shelfClearance = cfg.appLibrary ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
++            int shelfClearance = cfg.appLibrary && !fixedShelfTitle ? hero.getMeasuredHeight() + (int) (40 * density) : 0;
+             int want = Math.max(shelfClearance, h - dockRow - gridRows - (int) (AppAdapter.BOTTOM_ROOM_DP * density));
+             // Where the rows cannot fit even at the smallest tile (3 rows with the title on), the title keeps its
+             // room above the dock and the last rows run off the bottom instead of the title drawing over the clock.
+-            if (MainActivity.this.dockRow && cfg.dockTitle && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
++            if (MainActivity.this.dockRow && titleInsideGrid && rowsBelowDock > 0) want = Math.max(want, (int) (AppAdapter.TITLE_ROOM_DP * density));
+             // No dock to push down: the grid starts at the top, with room for the first row's zoom and glass.
+             if (!MainActivity.this.dockRow) want = (int) (AppAdapter.TOP_ROOM_DP * density);
+             // A single row never shows the names under its tiles (the title above the row names the app), so the
+@@ -844,6 +868,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         });
+         btnLibraryTop.setVisibility(cfg.libraryButton && cfg.appLibrary ? View.VISIBLE : View.GONE);
+         addTopBarApps(cfg.topBarApps, cfg.launchActions);
++        if (cfg.libraryBeforeWifi && btnLibraryTop.getVisibility() == View.VISIBLE) {
++            ViewGroup bar = (ViewGroup) btnLibraryTop.getParent();
++            bar.removeView(btnLibraryTop);
++            boolean rtl = getResources().getBoolean(R.bool.rtl_menu_bar);
++            bar.addView(btnLibraryTop, bar.indexOfChild(btnWifi) + (rtl ? 1 : 0));
++        }
+         iconOnlyButtons = cfg.iconOnlyButtons;
+         topMenu = cfg.topMenu;
+         wifiIconOnly = iconOnlyButtons && cfg.wifiLabelWidth <= 0;
+@@ -904,9 +934,29 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
+             int leftButton = rtlMenuBar ? R.id.btnSettings : firstButton;
+             int rightButton = rtlMenuBar ? firstButton : R.id.btnSettings;
+-            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return v.getId() == leftButton;
+-            return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == rightButton;
++            if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && v.getId() == leftButton) {
++                if (!rtlMenuBar && standbyButton.isShown()) standbyButton.requestFocus();
++                return true;
++            }
++            if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == rightButton) {
++                if (rtlMenuBar && standbyButton.isShown()) standbyButton.requestFocus();
++                return true;
++            }
++            return false;
+         };
++        standbyButton.setOnKeyListener((v, keyCode, event) -> {
++            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
++            if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
++                focusTile(singleRow ? lastFocused : lastFocused % COLUMNS);
++                return true;
++            }
++            if (keyCode == (rtlMenuBar ? KeyEvent.KEYCODE_DPAD_LEFT : KeyEvent.KEYCODE_DPAD_RIGHT)) {
++                (btnInputs.isShown() ? btnInputs : firstTopButton()).requestFocus();
++                return true;
++            }
++            return keyCode == KeyEvent.KEYCODE_DPAD_UP
++                    || keyCode == KeyEvent.KEYCODE_DPAD_LEFT || keyCode == KeyEvent.KEYCODE_DPAD_RIGHT;
++        });
+         btnInputs.setOnKeyListener(pillKeys);
+         btnWifi.setOnKeyListener(pillKeys);
+         btnVpn.setOnKeyListener(pillKeys);
+@@ -943,13 +993,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         } else {
+             registerReceiver(packageReceiver, packageFilter);
+         }
+-        if (openOnStartOnWake) {
+-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+-                registerReceiver(wakeReceiver, new IntentFilter(Intent.ACTION_SCREEN_ON), Context.RECEIVER_NOT_EXPORTED);
+-            } else {
+-                registerReceiver(wakeReceiver, new IntentFilter(Intent.ACTION_SCREEN_ON));
+-            }
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
++            registerReceiver(wakeReceiver, new IntentFilter(Intent.ACTION_SCREEN_ON), Context.RECEIVER_NOT_EXPORTED);
++        } else {
++            registerReceiver(wakeReceiver, new IntentFilter(Intent.ACTION_SCREEN_ON));
+         }
++        StandbyCleanupReceiver.prefs(this).registerOnSharedPreferenceChangeListener(standbyCleanupListener);
+ 
+         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+@@ -1083,6 +1132,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     protected void onResume() {
+         super.onResume();
+         resumed = true;
++        scheduleStandbyBanner();
+         // A festival that started or ended while Home was in the background: rebuild with or without it.
+         if (festive != festival.active(LocalDate.now())) {
+             recreate();
+@@ -1095,6 +1145,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             recreate();
+             return;
+         }
++        standbyCleanupChip.refresh();
+         restartIdleClock();
+         promptsPaused = false;
+         if (grid.getAdapter() == null) grid.setAdapter(adapter);   // dropped by onTrimMemory
+@@ -1299,6 +1350,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     protected void onPause() {
+         super.onPause();
+         resumed = false;
++        handler.removeCallbacks(showStandbyBanner);
++        removeStandbyBanner();
+         // No UP reaches a paused Home, so a vendor-key hold it saw go down would still open its app later.
+         // Only Home's own share is dropped: a key service that saw the same DOWN keeps its hold.
+         RemoteKeys.release(this);
+@@ -1361,6 +1414,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     public void onWindowFocusChanged(boolean hasFocus) {
+         super.onWindowFocusChanged(hasFocus);
+         if (hasFocus) {
++            scheduleStandbyBanner();
+             startPendingSettingsReorder();
+             if (libraryFocusPending && appLibrary == null) focusLibrary();
+             showCardPrompt();
+@@ -1369,6 +1423,47 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         }
+     }
+ 
++    private void scheduleStandbyBanner() {
++        if (!resumed || !StandbyCleanupReceiver.prefs(this).contains(StandbyCleanupReceiver.COUNT)) return;
++        handler.removeCallbacks(showStandbyBanner);
++        handler.postDelayed(showStandbyBanner, 1200);
++    }
++
++    private void displayStandbyBanner() {
++        if (!resumed || !hasWindowFocus() || !getSystemService(android.os.PowerManager.class).isInteractive()) return;
++        String result = StandbyCleanupReceiver.takePending(this);
++        if (result == null) return;
++
++        removeStandbyBanner();
++        standbyBanner = new TextView(this);
++        standbyBanner.setText(result);
++        standbyBanner.setTextSize(16);
++        standbyBanner.setTextColor(Color.WHITE);
++        standbyBanner.setGravity(Gravity.CENTER);
++        standbyBanner.setSingleLine(true);
++        standbyBanner.setEllipsize(android.text.TextUtils.TruncateAt.END);
++        standbyBanner.setBackgroundResource(R.drawable.standby_summary_panel);
++        int horizontal = Math.round(30 * density);
++        int vertical = Math.round(14 * density);
++        standbyBanner.setPadding(horizontal, vertical, horizontal, vertical);
++        standbyBanner.setElevation(24 * density);
++        standbyBanner.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
++        FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(
++                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
++        params.bottomMargin = Math.round(28 * density);
++        params.leftMargin = params.bottomMargin;
++        params.rightMargin = params.bottomMargin;
++        root.addView(standbyBanner, params);
++        handler.postDelayed(hideStandbyBanner, 5000);
++    }
++
++    private void removeStandbyBanner() {
++        handler.removeCallbacks(hideStandbyBanner);
++        if (standbyBanner == null) return;
++        root.removeView(standbyBanner);
++        standbyBanner = null;
++    }
++
+     @Override
+     protected void onDestroy() {
+         super.onDestroy();
+@@ -1376,7 +1471,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         cancelHoldOk();
+         if (gameDay != null) gameDay.shutdown();
+         unregisterReceiver(packageReceiver);
+-        if (openOnStartOnWake) unregisterReceiver(wakeReceiver);
++        unregisterReceiver(wakeReceiver);
++        StandbyCleanupReceiver.prefs(this).unregisterOnSharedPreferenceChangeListener(standbyCleanupListener);
+         wallpaperPlayer.close();
+         ConnectivityManager cm = getSystemService(ConnectivityManager.class);
+         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+@@ -1854,6 +1950,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             springY.animateToFinalPosition(y - glassScrollShift);
+         }
+         View item = (View) card.getParent();
++        if (dockDecoration != null) dockDecoration.focusTile(grid, position, animations && !reducedMotion);
+         if (dockRow && (singleRow || position < COLUMNS)) {
+             // Dock: park it at the bottom of the screen and show the top shelf for this app. In a single row
+             // every tile is in the dock's row, which never scrolls vertically.
+@@ -1868,9 +1965,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             }
+             showHero(position, scroll ? r.top - dy : r.top);
+         } else {
+-            // Below the dock (or in a plain grid) the glow follows the tile without the big name; letting it
+-            // fade out left the grid on plain black.
+-            showGlowOnly(position);
++            if (fixedShelfTitle) showHero(position, 0f);
++            else showGlowOnly(position);
+             // Scroll just enough so the whole glass (not only the tile) is visible.
+             revealRect.set(0, -(int) pad * 2, item.getWidth(), item.getHeight() + (int) pad);
+             grid.requestChildRectangleOnScreen(item, revealRect, reducedMotion);
+@@ -1901,10 +1997,23 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+ 
+     // ---- top shelf -------------------------------------------------------------------------------
+ 
++    /** Put the title between the header and the clipped grid, so rows scroll below it. */
++    private void placeFixedShelf() {
++        View gridFrame = (View) grid.getParent();
++        LinearLayout column = (LinearLayout) gridFrame.getParent();
++        ((ViewGroup) hero.getParent()).removeView(hero);
++        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
++        params.setMarginStart(Math.round(12 * density));
++        params.topMargin = Math.round(16 * density);
++        params.bottomMargin = Math.round(16 * density);
++        column.addView(hero, column.indexOfChild(gridFrame), params);
++    }
++
+     private void showHero(int position, float dockTopInRoot) {
+         String label = adapter.labelAt(position);
+         int color = adapter.ambientColorAt(position);
+-        float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
++        float y = fixedShelfTitle ? hero.getTop() : dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
+         boolean changed = !label.contentEquals(heroName.getText());
+         if (cinematic && heroArtAlpha > 0f) showHeroArt(position);
+ 
+diff --git a/launcher/app/src/main/res/layout-iw/activity_main.xml b/launcher/app/src/main/res/layout-iw/activity_main.xml
+index d1dc0fb..447e645 100644
+--- a/launcher/app/src/main/res/layout-iw/activity_main.xml
++++ b/launcher/app/src/main/res/layout-iw/activity_main.xml
+@@ -297,6 +297,8 @@
+                             android:ellipsize="none"
+                             android:textAllCaps="true" />
+ 
++                        <include layout="@layout/standby_cleanup_chip" />
++
+                         <TextClock
+                             android:id="@+id/clock"
+                             android:layout_width="wrap_content"
+diff --git a/launcher/app/src/main/res/layout/activity_launcher_settings.xml b/launcher/app/src/main/res/layout/activity_launcher_settings.xml
+index 601a7de..577e565 100644
+--- a/launcher/app/src/main/res/layout/activity_launcher_settings.xml
++++ b/launcher/app/src/main/res/layout/activity_launcher_settings.xml
+@@ -122,6 +122,17 @@
+             style="@style/SettingsRow"
+             android:layout_marginTop="10dp" />
+ 
++        <TextView
++            android:id="@+id/standbyCleanupChoice"
++            style="@style/SettingsRow"
++            android:layout_marginTop="10dp" />
++
++        <TextView
++            android:id="@+id/restartStandbyCleanup"
++            style="@style/SettingsRow"
++            android:layout_marginTop="10dp"
++            android:text="@string/standby_cleanup_restart" />
++
+         <TextView
+             android:layout_width="match_parent"
+             android:layout_height="wrap_content"
+diff --git a/launcher/app/src/main/res/layout/activity_main.xml b/launcher/app/src/main/res/layout/activity_main.xml
+index 70c6de3..b2d2ef1 100644
+--- a/launcher/app/src/main/res/layout/activity_main.xml
++++ b/launcher/app/src/main/res/layout/activity_main.xml
+@@ -205,6 +205,8 @@
+                     android:orientation="horizontal"
+                     android:baselineAligned="true">
+ 
++                    <include layout="@layout/standby_cleanup_chip" />
++
+                     <TextClock
+                         android:id="@+id/clock"
+                         android:layout_width="wrap_content"
+diff --git a/launcher/app/src/main/res/values-es/strings.xml b/launcher/app/src/main/res/values-es/strings.xml
+index 1d5f8b5..fc97b42 100644
+--- a/launcher/app/src/main/res/values-es/strings.xml
++++ b/launcher/app/src/main/res/values-es/strings.xml
+@@ -49,6 +49,24 @@
+     <string name="animations_state">Animaciones: %1$s</string>
+     <string name="advanced_effects">Efectos avanzados</string>
+     <string name="advanced_effects_state">Efectos avanzados: %1$s</string>
++    <string name="standby_cleanup_state">Liberar RAM al apagar: %1$s</string>
++    <string name="standby_cleanup_restart">Reactivar limpieza al apagar</string>
++    <string name="standby_cleanup_chip_title">Limpieza al apagar</string>
++    <string name="standby_cleanup_chip_off">Limpieza al apagar desactivada</string>
++    <string name="standby_cleanup_chip_unknown">Estado de la limpieza al apagar sin comprobar</string>
++    <string name="standby_cleanup_disable">Desactivar</string>
++    <string name="standby_cleanup_starting">Activando limpieza…</string>
++    <string name="standby_cleanup_started">Limpieza al apagar activa</string>
++    <string name="standby_cleanup_debug">Abrir opciones para desarrolladores</string>
++    <string name="standby_cleanup_connection_help">Activa la depuración inalámbrica, vuelve aquí e inténtalo de nuevo. Si la tele pide autorizar CleanYourTV, acéptalo con el mando.</string>
++    <string name="standby_cleanup_helper_error">El ayudante de limpieza del Streamer no está disponible.</string>
++    <string name="standby_cleanup_none">No se cerraron apps en segundo plano</string>
++    <string name="standby_cleanup_ram">%1$d MB de RAM Recuperados</string>
++    <string name="standby_cleanup_no_gain">Sin aumento medible de RAM disponible</string>
++    <plurals name="standby_cleanup_closed">
++        <item quantity="one">%d App Cerrada</item>
++        <item quantity="other">%d Apps Cerradas</item>
++    </plurals>
+     <string name="open_on_start_label">Abrir al iniciar</string>
+     <string name="open_on_start_state">Abrir al iniciar: %1$s</string>
+     <string name="advanced_effects_warning">Eleva las tarjetas, amplía los iconos y suaviza los cambios de color. Puede aumentar el uso de memoria; depende del televisor.</string>
+diff --git a/launcher/app/src/main/res/values/config.xml b/launcher/app/src/main/res/values/config.xml
+index 2255d16..280b36a 100644
+--- a/launcher/app/src/main/res/values/config.xml
++++ b/launcher/app/src/main/res/values/config.xml
+@@ -298,6 +298,8 @@
+     <bool name="dock_glass">false</bool>
+     <!-- Draw the dock band and its edge. false leaves the tiles floating on the wallpaper (config.xml dock_band). -->
+     <bool name="dock_band">true</bool>
++    <!-- Follow the focused grid row with the band and show its app name in a fixed top shelf. Themes can opt in. -->
++    <bool name="focus_row_shelf">false</bool>
+     <!-- Every app in one row: the dock apps first, the rest after them, and the row scrolls sideways when focus
+          reaches its edge. No grid below; rows_below_dock is ignored. Needs dock_row. Can also be set with
+          "single_row" in a theme. -->
+@@ -335,6 +337,8 @@
+     <bool name="wifi_status_warnings">false</bool>
+     <!-- The app library as a round button in the top bar, beside Settings (app_library must be on too). -->
+     <bool name="library_button">false</bool>
++    <!-- Put the top-bar library button immediately before Wi-Fi in reading order. Themes can opt in. -->
++    <bool name="library_before_wifi">false</bool>
+     <!-- The App library pill after the last Home row. false hides it while library_button is on, so the top-bar
+          button stays the way in, and Down from the last row stays put as with app_library off. Can also be set
+          with "show_library_pill": false in a theme's config.json. -->
+diff --git a/launcher/app/src/main/res/values/strings.xml b/launcher/app/src/main/res/values/strings.xml
+index 2b2b53e..4bbccd2 100644
+--- a/launcher/app/src/main/res/values/strings.xml
++++ b/launcher/app/src/main/res/values/strings.xml
+@@ -61,6 +61,24 @@
+     <string name="animations_state">Animations: %1$s</string>
+     <string name="advanced_effects">Advanced effects</string>
+     <string name="advanced_effects_state">Advanced effects: %1$s</string>
++    <string name="standby_cleanup_state">Free RAM on standby: %1$s</string>
++    <string name="standby_cleanup_restart">Reactivate standby cleanup</string>
++    <string name="standby_cleanup_chip_title">Standby cleanup</string>
++    <string name="standby_cleanup_chip_off">Standby cleanup is off</string>
++    <string name="standby_cleanup_chip_unknown">Standby cleanup status unavailable</string>
++    <string name="standby_cleanup_disable">Turn off</string>
++    <string name="standby_cleanup_starting">Starting cleanup…</string>
++    <string name="standby_cleanup_started">Standby cleanup is active</string>
++    <string name="standby_cleanup_debug">Open developer options</string>
++    <string name="standby_cleanup_connection_help">Turn on Wireless debugging, return here and try again. If the TV asks to authorize CleanYourTV, allow it with the remote.</string>
++    <string name="standby_cleanup_helper_error">The local cleanup helper is unavailable.</string>
++    <string name="standby_cleanup_none">No background apps closed</string>
++    <string name="standby_cleanup_ram">≈%1$d MB of RAM recovered</string>
++    <string name="standby_cleanup_no_gain">No measurable increase in available RAM</string>
++    <plurals name="standby_cleanup_closed">
++        <item quantity="one">%d app closed</item>
++        <item quantity="other">%d apps closed</item>
++    </plurals>
+     <string name="open_on_start_label">Open on start</string>
+     <string name="open_on_start_state">Open on start: %1$s</string>
+     <string name="advanced_effects_warning">Adds a lifted tile, icon zoom and smooth colour transitions. May increase memory use; the actual difference depends on your TV.</string>
+diff --git a/launcher/settings.gradle b/launcher/settings.gradle
+index 1b6aef2..b2cedfa 100644
+--- a/launcher/settings.gradle
++++ b/launcher/settings.gradle
+@@ -10,6 +10,12 @@ dependencyResolutionManagement {
+     repositories {
+         google()
+         mavenCentral()
++        maven {
++            url = uri('https://jitpack.io')
++            content {
++                includeGroup('com.github.MuntashirAkon')
++            }
++        }
+     }
+ }
+ rootProject.name = "tvhome"
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupChip.java b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupChip.java
+new file mode 100644
+index 0000000..1f12f27
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupChip.java
+@@ -0,0 +1,80 @@
++package com.gathin.tvhome;
++
++import android.app.Activity;
++import android.app.AlertDialog;
++import android.content.Context;
++import android.widget.TextView;
++
++final class StandbyCleanupChip {
++    private final Activity activity;
++    private final TextView button;
++    private StandbyCleanupStarter.Result state = StandbyCleanupStarter.Result.CONNECTION_UNAVAILABLE;
++    private boolean checking;
++    private boolean activating;
++    private int revision;
++
++    StandbyCleanupChip(Activity activity, TextView button) {
++        this.activity = activity;
++        this.button = button;
++        button.setOnClickListener(view -> select());
++        button.setOnFocusChangeListener((view, focused) -> {
++            if (focused) refresh();
++        });
++    }
++
++    void refresh() {
++        if (checking || activating) return;
++        Context context = activity.getApplicationContext();
++        if (!StandbyCleanupReceiver.enabled(context)) {
++            show(StandbyCleanupStarter.Result.INACTIVE);
++            return;
++        }
++        checking = true;
++        int current = revision;
++        new Thread(() -> {
++            StandbyCleanupStarter.Result result = StandbyCleanupStarter.status(context);
++            activity.runOnUiThread(() -> {
++                checking = false;
++                if (!activity.isDestroyed() && current == revision) show(result);
++            });
++        }, "StandbyCleanupStatus").start();
++    }
++
++    private void select() {
++        if (activating) return;
++        if (state == StandbyCleanupStarter.Result.ACTIVE) {
++            new AlertDialog.Builder(activity)
++                    .setTitle(R.string.standby_cleanup_chip_title)
++                    .setMessage(R.string.standby_cleanup_started)
++                    .setPositiveButton(R.string.standby_cleanup_disable, (dialog, which) -> {
++                        revision++;
++                        StandbyCleanupReceiver.setEnabled(activity, false);
++                        show(StandbyCleanupStarter.Result.INACTIVE);
++                    })
++                    .setNegativeButton(android.R.string.cancel, null)
++                    .show();
++            return;
++        }
++
++        revision++;
++        activating = true;
++        button.setContentDescription(activity.getString(R.string.standby_cleanup_starting));
++        StandbyCleanupStarter.reactivate(activity, result -> {
++            activating = false;
++            show(result);
++        });
++    }
++
++    private void show(StandbyCleanupStarter.Result result) {
++        state = result;
++        boolean active = result == StandbyCleanupStarter.Result.ACTIVE;
++        button.setCompoundDrawableTintList(activity.getColorStateList(
++                active ? R.color.standby_chip_on : R.color.standby_chip_off));
++        int description = switch (result) {
++            case ACTIVE -> R.string.standby_cleanup_started;
++            case INACTIVE -> R.string.standby_cleanup_chip_off;
++            default -> R.string.standby_cleanup_chip_unknown;
++        };
++        button.setContentDescription(activity.getString(description));
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupReceiver.java b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupReceiver.java
+new file mode 100644
+index 0000000..d07e882
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupReceiver.java
+@@ -0,0 +1,52 @@
++package com.gathin.tvhome;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.content.SharedPreferences;
++
++public final class StandbyCleanupReceiver extends BroadcastReceiver {
++    private static final String ENABLED = "enabled";
++    static final String COUNT = "closed_apps";
++    private static final String RAM_MB = "recovered_mb";
++
++    static SharedPreferences prefs(Context context) {
++        return context.getSharedPreferences("standby_cleanup", Context.MODE_PRIVATE);
++    }
++
++    static boolean enabled(Context context) {
++        return prefs(context).getBoolean(ENABLED, false);
++    }
++
++    static void setEnabled(Context context, boolean enabled) {
++        prefs(context).edit().putBoolean(ENABLED, enabled).remove(COUNT).remove(RAM_MB).apply();
++    }
++
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        if (!enabled(context)) return;
++        String action = intent.getAction();
++        if ("com.gathin.tvhome.standby.CHECK".equals(action)) {
++            if (isOrderedBroadcast()) setResultCode(1);
++        } else if ("com.gathin.tvhome.standby.RESULT".equals(action)) {
++            int count = intent.getIntExtra(COUNT, -1);
++            int ramMb = intent.getIntExtra(RAM_MB, -1);
++            if (count < 0 || ramMb < 0) return;
++            prefs(context).edit().putInt(COUNT, count).putInt(RAM_MB, ramMb).apply();
++        }
++    }
++
++    static String takePending(Context context) {
++        SharedPreferences prefs = prefs(context);
++        int count = prefs.getInt(COUNT, -1);
++        if (count < 0) return null;
++        int ramMb = prefs.getInt(RAM_MB, 0);
++        prefs.edit().remove(COUNT).remove(RAM_MB).apply();
++
++        if (count == 0) return context.getString(R.string.standby_cleanup_none);
++        String closed = context.getResources().getQuantityString(R.plurals.standby_cleanup_closed, count, count);
++        String ram = ramMb > 0 ? context.getString(R.string.standby_cleanup_ram, ramMb)
++                : context.getString(R.string.standby_cleanup_no_gain);
++        return closed + " - " + ram;
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupStarter.java b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupStarter.java
+new file mode 100644
+index 0000000..6cee95f
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupStarter.java
+@@ -0,0 +1,197 @@
++package com.gathin.tvhome;
++
++import android.app.Activity;
++import android.app.AlertDialog;
++import android.content.ActivityNotFoundException;
++import android.content.Context;
++import android.content.Intent;
++import android.content.SharedPreferences;
++import android.os.Build;
++import android.provider.Settings;
++import android.util.Base64;
++import android.util.Log;
++import android.widget.Toast;
++
++import org.bouncycastle.asn1.x500.X500Name;
++import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter;
++import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder;
++import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder;
++
++import java.io.BufferedReader;
++import java.io.IOException;
++import java.io.InputStreamReader;
++import java.math.BigInteger;
++import java.nio.charset.StandardCharsets;
++import java.security.KeyFactory;
++import java.security.KeyPair;
++import java.security.KeyPairGenerator;
++import java.security.PrivateKey;
++import java.security.SecureRandom;
++import java.security.cert.Certificate;
++import java.security.cert.CertificateFactory;
++import java.security.spec.PKCS8EncodedKeySpec;
++import java.util.Date;
++import java.util.concurrent.CountDownLatch;
++import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.function.Consumer;
++
++import io.github.muntashirakon.adb.AdbConnection;
++import io.github.muntashirakon.adb.AdbStream;
++import io.github.muntashirakon.adb.android.AdbMdns;
++
++/** Starts the existing shell-owned helper through a short connection to this device only. */
++final class StandbyCleanupStarter {
++    enum Result { ACTIVE, INACTIVE, HELPER_UNAVAILABLE, CONNECTION_UNAVAILABLE }
++
++    private static final String TAG = "StandbyCleanupStarter";
++    private static final String HELPER = "/data/local/tmp/cleanyourtv-standby.sh";
++    private static final String MONITOR_RUNNING = "ps -A -o ARGS | grep -Fqx 'sh " + HELPER + "'";
++    private static final String STATUS = MONITOR_RUNNING + " && echo active || echo inactive";
++    private static final String START = "test -s " + HELPER + " || { echo missing; exit; }; "
++            + "if ! " + MONITOR_RUNNING + "; then toybox nohup setsid sh " + HELPER
++            + " </dev/null >/dev/null 2>&1 & sleep 1; fi; " + STATUS;
++
++    static Result status(Context context) {
++        return StandbyCleanupReceiver.enabled(context) ? request(context, false) : Result.INACTIVE;
++    }
++
++    static void reactivate(Activity activity, Consumer<Result> onResult) {
++        Context context = activity.getApplicationContext();
++        new Thread(() -> {
++            Result result = request(context, true);
++            if (result == Result.ACTIVE && !StandbyCleanupReceiver.enabled(context)) {
++                StandbyCleanupReceiver.setEnabled(context, true);
++            }
++            activity.runOnUiThread(() -> {
++                if (activity.isFinishing() || activity.isDestroyed()) return;
++                onResult.accept(result);
++                showActivationResult(activity, result);
++            });
++        }, "StandbyCleanupStarter").start();
++    }
++
++    private static void showActivationResult(Activity activity, Result result) {
++        if (result == Result.ACTIVE) {
++            Toast.makeText(activity, R.string.standby_cleanup_started, Toast.LENGTH_LONG).show();
++        } else if (result == Result.HELPER_UNAVAILABLE) {
++            new AlertDialog.Builder(activity).setMessage(R.string.standby_cleanup_helper_error)
++                    .setPositiveButton(android.R.string.ok, null).show();
++        } else {
++            new AlertDialog.Builder(activity).setMessage(R.string.standby_cleanup_connection_help)
++                    .setPositiveButton(R.string.standby_cleanup_debug, (dialog, which) -> {
++                        try {
++                            activity.startActivity(new Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS));
++                        } catch (ActivityNotFoundException ignored) {
++                            activity.startActivity(new Intent(Settings.ACTION_SETTINGS));
++                        }
++                    })
++                    .setNegativeButton(android.R.string.cancel, null).show();
++        }
++    }
++
++    private static Result request(Context context, boolean activate) {
++        try {
++            boolean hasIdentity = identityPrefs(context).contains("private_key");
++            if (!activate) {
++                if (!hasIdentity) return Result.CONNECTION_UNAVAILABLE;
++                Result legacy = requestAt(context, 5555, 2, false);
++                if (legacy != Result.CONNECTION_UNAVAILABLE) return legacy;
++            }
++            if (hasIdentity) {
++                int tlsPort = findTlsPort(context);
++                if (tlsPort > 0) {
++                    Result secure = requestAt(context, tlsPort, activate ? 8 : 2, activate);
++                    if (secure != Result.CONNECTION_UNAVAILABLE) return secure;
++                }
++            }
++            return activate ? requestAt(context, 5555, 45, true) : Result.CONNECTION_UNAVAILABLE;
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++            return Result.CONNECTION_UNAVAILABLE;
++        } catch (Exception e) {
++            Log.w(TAG, "Could not prepare local debugging", e);
++            return Result.CONNECTION_UNAVAILABLE;
++        }
++    }
++
++    private static Result requestAt(Context context, int port, int timeoutSeconds, boolean activate) throws Exception {
++        Identity identity = identity(context);
++        try (AdbConnection connection = new AdbConnection.Builder("127.0.0.1", port)
++                .setApi(Build.VERSION.SDK_INT)
++                .setDeviceName("CleanYourTV")
++                .setPrivateKey(identity.privateKey())
++                .setCertificate(identity.certificate())
++                .build()) {
++            if (!connection.connect(timeoutSeconds, TimeUnit.SECONDS, !activate)) {
++                return Result.CONNECTION_UNAVAILABLE;
++            }
++            try (AdbStream stream = connection.open("shell:" + (activate ? START : STATUS));
++                 BufferedReader output = new BufferedReader(new InputStreamReader(
++                         stream.openInputStream(), StandardCharsets.UTF_8))) {
++                String state = output.readLine();
++                if ("active".equals(state)) {
++                    if (activate) Log.i(TAG, "Cleanup active through local debugging on port " + port);
++                    return Result.ACTIVE;
++                }
++                if (activate) return Result.HELPER_UNAVAILABLE;
++                return "inactive".equals(state) ? Result.INACTIVE : Result.CONNECTION_UNAVAILABLE;
++            }
++        } catch (IOException e) {
++            if (activate) Log.i(TAG, "Local debugging connection on port " + port + " is unavailable", e);
++            return Result.CONNECTION_UNAVAILABLE;
++        }
++    }
++
++    private static int findTlsPort(Context context) throws InterruptedException {
++        CountDownLatch found = new CountDownLatch(1);
++        AtomicInteger port = new AtomicInteger();
++        AdbMdns discovery = new AdbMdns(context, AdbMdns.SERVICE_TYPE_TLS_CONNECT, (address, value) -> {
++            if (address != null && value > 0) {
++                port.set(value);
++                found.countDown();
++            }
++        });
++        discovery.start();
++        try {
++            return found.await(5, TimeUnit.SECONDS) ? port.get() : 0;
++        } finally {
++            discovery.stop();
++        }
++    }
++
++    private record Identity(PrivateKey privateKey, Certificate certificate) {}
++
++    private static SharedPreferences identityPrefs(Context context) {
++        return context.getSharedPreferences("standby_local_debug_identity", Context.MODE_PRIVATE);
++    }
++
++    private static synchronized Identity identity(Context context) throws Exception {
++        SharedPreferences keys = identityPrefs(context);
++        String key = keys.getString("private_key", null);
++        String cert = keys.getString("certificate", null);
++        if (key != null && cert != null) {
++            PrivateKey privateKey = KeyFactory.getInstance("RSA").generatePrivate(
++                    new PKCS8EncodedKeySpec(Base64.decode(key, Base64.NO_WRAP)));
++            Certificate certificate = CertificateFactory.getInstance("X.509").generateCertificate(
++                    new java.io.ByteArrayInputStream(Base64.decode(cert, Base64.NO_WRAP)));
++            return new Identity(privateKey, certificate);
++        }
++
++        KeyPairGenerator generator = KeyPairGenerator.getInstance("RSA");
++        generator.initialize(2048);
++        KeyPair pair = generator.generateKeyPair();
++        X500Name name = new X500Name("CN=CleanYourTV");
++        long now = System.currentTimeMillis();
++        Certificate certificate = new JcaX509CertificateConverter().getCertificate(
++                new JcaX509v3CertificateBuilder(name, new BigInteger(128, new SecureRandom()).setBit(127),
++                        new Date(now - TimeUnit.DAYS.toMillis(1)), new Date(now + TimeUnit.DAYS.toMillis(3650)),
++                        name, pair.getPublic()).build(
++                        new JcaContentSignerBuilder("SHA256withRSA").build(pair.getPrivate())));
++        if (!keys.edit().putString("private_key", Base64.encodeToString(pair.getPrivate().getEncoded(), Base64.NO_WRAP))
++                .putString("certificate", Base64.encodeToString(certificate.getEncoded(), Base64.NO_WRAP)).commit()) {
++            throw new IOException("Could not save the local debugging identity");
++        }
++        return new Identity(pair.getPrivate(), certificate);
++    }
++}
+diff --git a/launcher/app/src/main/res/color/standby_chip_off.xml b/launcher/app/src/main/res/color/standby_chip_off.xml
+new file mode 100644
+index 0000000..07fa811
+--- /dev/null
++++ b/launcher/app/src/main/res/color/standby_chip_off.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_focused="true" android:color="#FF5A636B" />
++    <item android:color="#FF858E97" />
++</selector>
+diff --git a/launcher/app/src/main/res/color/standby_chip_on.xml b/launcher/app/src/main/res/color/standby_chip_on.xml
+new file mode 100644
+index 0000000..8ae1bff
+--- /dev/null
++++ b/launcher/app/src/main/res/color/standby_chip_on.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<selector xmlns:android="http://schemas.android.com/apk/res/android">
++    <item android:state_focused="true" android:color="#FF087A3F" />
++    <item android:color="#FF6DE69C" />
++</selector>
+diff --git a/launcher/app/src/main/res/drawable/ic_ram_chip.xml b/launcher/app/src/main/res/drawable/ic_ram_chip.xml
+new file mode 100644
+index 0000000..6c36f48
+--- /dev/null
++++ b/launcher/app/src/main/res/drawable/ic_ram_chip.xml
+@@ -0,0 +1,13 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="22dp"
++    android:height="22dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24">
++    <path
++        android:pathData="M8,5H16Q19,5 19,8V16Q19,19 16,19H8Q5,19 5,16V8Q5,5 8,5Z M9,9H15V15H9Z M9,2V5 M15,2V5 M9,19V22 M15,19V22 M2,9H5 M2,15H5 M19,9H22 M19,15H22"
++        android:strokeColor="#FFFFFFFF"
++        android:strokeLineCap="round"
++        android:strokeLineJoin="round"
++        android:strokeWidth="1.6" />
++</vector>
+diff --git a/launcher/app/src/main/res/drawable/standby_summary_panel.xml b/launcher/app/src/main/res/drawable/standby_summary_panel.xml
+new file mode 100644
+index 0000000..508b92a
+--- /dev/null
++++ b/launcher/app/src/main/res/drawable/standby_summary_panel.xml
+@@ -0,0 +1,5 @@
++<?xml version="1.0" encoding="utf-8"?>
++<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
++    <gradient android:angle="270" android:startColor="#FF2A2A2E" android:endColor="#FF161618" />
++    <stroke android:width="1dp" android:color="#33FFFFFF" />
++</shape>
+diff --git a/launcher/app/src/main/res/layout/standby_cleanup_chip.xml b/launcher/app/src/main/res/layout/standby_cleanup_chip.xml
+new file mode 100644
+index 0000000..25eb543
+--- /dev/null
++++ b/launcher/app/src/main/res/layout/standby_cleanup_chip.xml
+@@ -0,0 +1,10 @@
++<?xml version="1.0" encoding="utf-8"?>
++<TextView xmlns:android="http://schemas.android.com/apk/res/android"
++    android:id="@+id/btnStandbyCleanup"
++    style="@style/TopButtonIcon"
++    android:layout_gravity="center_vertical"
++    android:layout_marginStart="0dp"
++    android:layout_marginEnd="12dp"
++    android:contentDescription="@string/standby_cleanup_chip_unknown"
++    android:drawableStart="@drawable/ic_ram_chip"
++    android:drawableTint="@color/standby_chip_off" />

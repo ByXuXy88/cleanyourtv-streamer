@@ -1,0 +1,8 @@
+upstream/
+backup/
+__pycache__/
+*.apk
+*.aab
+*.keystore
+*.jks
+adbkey*
