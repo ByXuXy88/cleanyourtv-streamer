@@ -9,9 +9,11 @@
 
 ## Antes y después
 
-| Configuración anterior de CleanYourTV | Inicio con los añadidos |
+| Inicio original de Google TV | CleanYourTV con los añadidos |
 | --- | --- |
-| ![Cuatro columnas y banda fija](antes.png) | ![Tres columnas, chip de RAM y banda en la fila seleccionada](despues.png) |
+| ![Inicio original de Google TV, imagen oficial de referencia](https://www.gstatic.com/marketing-cms/assets/images/48/87/83f6d1b44683978d267f9b91b285/tv-2x.webp) | ![Tres columnas, chip de RAM y banda en la fila seleccionada](despues.png) |
+
+La imagen del Inicio original es una referencia oficial de Google TV. [Fuente de la imagen](https://tv.google/)
 
 - [Vídeo de navegación y cajón de apps](demostracion-navegacion.mp4?raw=1)
 - [Vídeo del aviso de RAM](demostracion-aviso.mp4?raw=1), grabado al mostrar de nuevo el resultado real de la prueba de reposo.
