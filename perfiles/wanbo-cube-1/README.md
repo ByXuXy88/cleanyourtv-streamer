@@ -73,3 +73,7 @@ Este ajuste es opcional. En la unidad probada, Android tenía un temporizador de
 | RAM disponible del sistema, mediana de 3 | 233 MiB | 313 MiB |
 
 Tiempos de `WaitTime` con `am start -W` en la misma unidad. Se detuvo el proceso de la app para cada apertura en frío. Las muestras de RAM se tomaron en Inicio tras cerrar AIDA64. Las cifras reflejan el conjunto de cambios de este perfil y el estado de Android durante la prueba. El retorno desde AIDA64 fue más lento y variable en la prueba final. Las cinco muestras finales fueron 625, 958, 103, 627 y 111 ms.
+
+## Actualización a Android 14
+
+El último reinicio aplicó una actualización pendiente a Android 14, compilación `UKG3.251130.001.C1.6.4_20260723`. El proyector mostró temporalmente un aviso de actualización y se reinició por sí solo. Al terminar, arrancó en CleanYourTV, conservó las nueve apps, mantuvo retirados los paquetes de la limpieza y siguió con la pantalla activa mientras recibe corriente. Quedaron unos 2 GiB libres en `/data`. Las mediciones de la tabla se hicieron antes de esa actualización, con Android 11.
