@@ -1,6 +1,6 @@
 # CleanYourTV Streamer
 
-**Proyecto original de [Gathin23 (Gathin)](https://github.com/Gathin23) y los colaboradores de [CleanYourTV](https://github.com/Gathin23/cleanyourtv).** Este repositorio recoge las modificaciones que hicimos sobre [CleanYourTV v3.4.0](https://github.com/Gathin23/cleanyourtv/tree/v3.4.0) para dispositivos Google TV. Incluye el parche completo del launcher, el tema de tres columnas y el monitor de reposo. Cada persona compila y firma su propia instalación.
+**Proyecto original de [Gathin23 (Gathin)](https://github.com/Gathin23) y los colaboradores de [CleanYourTV](https://github.com/Gathin23/cleanyourtv).** Este repositorio recoge las modificaciones que hicimos sobre [CleanYourTV v3.4.0](https://github.com/Gathin23/cleanyourtv/tree/v3.4.0) para dispositivos Android TV y Google TV. Incluye el parche completo del launcher, el tema de tres columnas y el monitor de reposo. Cada persona compila y firma su propia instalación.
 
 - Tema oscuro, banda de cristal que sigue la fila seleccionada y nombre de la app fijo al navegar.
 - Cajón de apps a la izquierda del Wi-Fi y accesos superiores con iconos.
@@ -24,7 +24,8 @@ La imagen del Inicio original es una referencia oficial de Google TV. [Fuente de
 | Dispositivo | Recursos | Estado |
 | --- | --- | --- |
 | Google TV Streamer (4K), `kirkwood` | 4 GB de RAM, 32 GB de almacenamiento | Probado en Android 14, compilación `UTTK.260317.003`, con reinicio completo, reactivación local, reposo y aviso. |
-| Chromecast con Google TV (4K), `sabrina` | 2 GB de RAM, 8 GB de almacenamiento | El launcher base tiene soporte documentado. Este parche y el monitor quedan pendientes de prueba en ese equipo. Empieza con el tema y las animaciones básicas. |
+| Chromecast con Google TV (4K), `sabrina` | 2 GB de RAM, 8 GB de almacenamiento | Probado en Android 14, compilación `UTTC.250917.004`, con reinicio, reactivación del chip y aviso al salir de reposo. El firmware necesitó reactivar la depuración inalámbrica tras reiniciar. |
+| Wanbo Cube 1, `BOS` | 1 GB de RAM, Mali-G31, 720p | [Tema ligero y guía de diagnóstico](perfiles/wanbo-cube-1/README.md) para Android TV 11, `HP4703-Skyworth`. |
 
 [Ficha del Streamer](https://store.google.com/product/google_tv_streamer_specs) · [Ficha del Chromecast](https://support.google.com/chromecast/answer/12578818) · [Desmontaje del Chromecast 4K](https://www.techinsights.com/products/ddt-2010-818) · [Notas de firmware](https://support.google.com/chromecast/answer/7124014)
 
