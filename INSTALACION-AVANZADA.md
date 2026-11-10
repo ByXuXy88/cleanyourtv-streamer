@@ -21,6 +21,12 @@ Los candidatos observados en el Streamer fueron Feedback de Google (`com.google.
 
 Si elegiste un tema con pocas utilidades visibles, puedes instalar AIDA64 y un explorador desde Play Store y añadir sus paquetes al cajón. Cada persona decide qué apps y accesos quiere ver.
 
+## Actualizar apps con ObtainX y Shizuku
+
+[ObtainX](https://github.com/bikram-agarwal/ObtainX) consulta las fuentes de cada app y puede usar [Shizuku](https://github.com/RikkaApps/Shizuku) como instalador en segundo plano. Instala ambas herramientas desde sus fuentes oficiales, inicia Shizuku, selecciónalo como modo de instalación en ObtainX y autoriza ObtainX en el aviso de Shizuku. Usa APK compatibles con el dispositivo y firmados con la misma clave que la app instalada. [Modos de instalación de ObtainX](https://github.com/bikram-agarwal/ObtainX/blob/main/docs/Difference_with_Obtainium.md).
+
+En Android 11, Shizuku puede usar el emparejamiento inalámbrico si el fabricante lo ofrece. El manual de Shizuku documenta el inicio desde un ordenador con ADB para dispositivos sin root en Android 10 y anteriores. Comprueba los requisitos de la versión de Shizuku y de ObtainX que instales. La recuperación automática de CleanYourTV se comprobó en la [Philips con Android TV 11](perfiles/philips-ph0m-ea-t32/README.md#shizuku-y-obtainx) y depende de que el firmware vuelva a abrir el ADB local tras reiniciar. [Manual de Shizuku](https://shizuku.rikka.app/guide/setup/).
+
 ## Volver atrás
 
 1. Detén el monitor de reposo con `python monitor.py --device "<dispositivo>" stop` y desactívalo desde CleanYourTV.

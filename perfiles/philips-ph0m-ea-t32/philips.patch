@@ -1,0 +1,326 @@
+--- a/launcher/app/build.gradle
++++ b/launcher/app/build.gradle
+@@ -13,7 +13,8 @@
+         applicationId providers.gradleProperty('launcherApplicationId').getOrElse('com.gathin.tvhome')
+         minSdk 26
+         targetSdk 34
+-        versionCode 13
++        // Keep the installed Philips code so the signed backup can be restored in place.
++        versionCode 11
+         versionName '3.4'
+     }
+ 
+--- a/launcher/app/src/main/AndroidManifest.xml
++++ b/launcher/app/src/main/AndroidManifest.xml
+@@ -10,6 +10,7 @@
+     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+     <uses-permission android:name="android.permission.INTERNET" />
++    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+     <!-- Needed since Android 10 to read the Wi-Fi network name for the network pill. Never requested at
+          runtime: build-and-install grants it with pm grant, so lint's Android 12 "ask for COARSE with
+          FINE" rule does not apply here. -->
+@@ -237,6 +238,12 @@
+             android:exported="true"
+             android:permission="android.permission.DUMP" />
+ 
++        <receiver android:name=".PhilipsServicesBootReceiver" android:exported="false">
++            <intent-filter>
++                <action android:name="android.intent.action.BOOT_COMPLETED" />
++            </intent-filter>
++        </receiver>
++
+         <receiver
+             android:name=".GuardConfig"
+             android:exported="true"
+--- a/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AppAdapter.java
+@@ -288,8 +288,9 @@
+         for (ResolveInfo ri : found) {
+             if (ri.activityInfo == null) continue;
+             String pkg = ri.activityInfo.packageName;
++            boolean showByDefault = tvPackages.contains(pkg) && (favourites.isEmpty() || favourites.contains(pkg));
+             if (pkg.equals(ctx.getPackageName()) || !ri.activityInfo.exported
+-                    || !LibraryApps.visible(tvPackages.contains(pkg), hidden.contains(pkg), added.contains(pkg), removed.contains(pkg))) continue;
++                    || !LibraryApps.visible(showByDefault, hidden.contains(pkg), added.contains(pkg), removed.contains(pkg))) continue;
+             ComponentName component = new ComponentName(pkg, ri.activityInfo.name);
+             Cards.Card card = cardByPkg.get(pkg);
+             if (card != null && !card.component.equals(component)) continue;   // the card stands in for this tile
+--- a/launcher/app/src/main/java/com/gathin/tvhome/AppLibraryDialog.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AppLibraryDialog.java
+@@ -272,6 +272,8 @@
+     }
+ 
+     private void fill(List<ResolveInfo> catalogue) {
++        // The drawer is for apps without a Home tile. The selection mode still manages all shortcuts.
++        if (!selectionMode) catalogue.removeIf(app -> onHome.test(app.activityInfo.packageName));
+         totalApps = catalogue.size();
+         apps = catalogue;
+         Map<String, Boolean> home = new HashMap<>();
+--- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+@@ -303,7 +303,7 @@
+         @Override
+         public void onReceive(Context context, Intent intent) {
+             if (openOnStartOnWake) openStartAppOnWake();
+-            if (resumed) standbyCleanupChip.refresh();
++            standbyCleanupChip.restoreAfterWake();
+             scheduleStandbyBanner();
+         }
+     };
+@@ -932,8 +932,9 @@
+                 return true;
+             }
+             int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
+-            int leftButton = rtlMenuBar ? R.id.btnSettings : firstButton;
+-            int rightButton = rtlMenuBar ? firstButton : R.id.btnSettings;
++            int lastButton = lastTopButton(rtlMenuBar).getId();
++            int leftButton = rtlMenuBar ? lastButton : firstButton;
++            int rightButton = rtlMenuBar ? firstButton : lastButton;
+             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && v.getId() == leftButton) {
+                 if (!rtlMenuBar && standbyButton.isShown()) standbyButton.requestFocus();
+                 return true;
+@@ -1145,7 +1146,7 @@
+             recreate();
+             return;
+         }
+-        standbyCleanupChip.refresh();
++        standbyCleanupChip.restoreAfterWake();
+         restartIdleClock();
+         promptsPaused = false;
+         if (grid.getAdapter() == null) grid.setAdapter(adapter);   // dropped by onTrimMemory
+@@ -2670,9 +2671,18 @@
+     /** top_bar_apps buttons, in bar order. */
+     private final List<View> topAppButtons = new ArrayList<>();
+ 
++    private View lastTopButton(boolean rtl) {
++        ViewGroup bar = findViewById(R.id.topButtons);
++        int count = bar.getChildCount();
++        for (int i = 0; i < count; i++) {
++            View button = bar.getChildAt(rtl ? i : count - 1 - i);
++            if (button.getVisibility() == View.VISIBLE) return button;
++        }
++        return findViewById(R.id.btnSettings);
++    }
++
+     /**
+-     * Puts each top_bar_apps app in the top bar as a round pill with the app's own logo, left of the network pill.
+-     * The logo keeps its colours: the pill style's tint, which turns the other icons white, is cleared.
++     * Keep the configured app shortcuts next to Settings, using the same tint as the other icons.
+      */
+     private void addTopBarApps(List<String> packages, Map<String, String> launchActions) {
+         ViewGroup bar = findViewById(R.id.topButtons);
+@@ -2701,12 +2711,12 @@
+             button.setId(View.generateViewId());
+             logo.setBounds(0, 0, size, size);
+             button.setCompoundDrawablesRelative(logo, null, null, null);
+-            button.setCompoundDrawableTintList(null);
++            button.setCompoundDrawableTintList(button.getTextColors());
+             button.setContentDescription(label);
+             Intent target = launch;
+             button.setOnClickListener(v -> open(new Intent(target)));
+-            // After the network pill and the VPN pill; the Hebrew bar runs the other way, so before both there.
+-            bar.addView(button, bar.indexOfChild(getResources().getBoolean(R.bool.rtl_menu_bar) ? btnVpn : btnWifi));
++            int index = getResources().getBoolean(R.bool.rtl_menu_bar) ? 0 : bar.getChildCount();
++            bar.addView(button, index);
+             topAppButtons.add(button);
+         }
+     }
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/PhilipsServicesBootReceiver.java
+@@ -0,0 +1,22 @@
++package com.gathin.tvhome;
++
++import android.content.BroadcastReceiver;
++import android.content.Context;
++import android.content.Intent;
++import android.util.Log;
++
++/** Restores local services even when the Philips opens live TV instead of Home on boot. */
++public final class PhilipsServicesBootReceiver extends BroadcastReceiver {
++    @Override
++    public void onReceive(Context context, Intent intent) {
++        if (!Intent.ACTION_BOOT_COMPLETED.equals(intent.getAction())) return;
++        PendingResult pending = goAsync();
++        StandbyCleanupStarter.restoreServices(context.getApplicationContext(), true, ready -> {
++            try {
++                Log.i("CleanYourTVShizuku", ready ? "Ready after boot" : "Unavailable after boot");
++            } finally {
++                pending.finish();
++            }
++        });
++    }
++}
+--- a/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupChip.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupChip.java
+@@ -4,6 +4,7 @@
+ import android.app.AlertDialog;
+ import android.content.Context;
+ import android.widget.TextView;
++import android.widget.Toast;
+ 
+ final class StandbyCleanupChip {
+     private final Activity activity;
+@@ -40,6 +41,18 @@
+         }, "StandbyCleanupStatus").start();
+     }
+ 
++    void restoreAfterWake() {
++        restoreServices(false);
++    }
++
++    private void restoreServices(boolean showResult) {
++        StandbyCleanupStarter.restoreServices(activity, ready -> {
++            refresh();
++            if (showResult) Toast.makeText(activity, ready ? R.string.shizuku_recovery_ready
++                    : R.string.shizuku_recovery_unavailable, Toast.LENGTH_LONG).show();
++        });
++    }
++
+     private void select() {
+         if (activating) return;
+         if (state == StandbyCleanupStarter.Result.ACTIVE) {
+@@ -52,6 +65,7 @@
+                         show(StandbyCleanupStarter.Result.INACTIVE);
+                     })
+                     .setNegativeButton(android.R.string.cancel, null)
++                    .setNeutralButton(R.string.shizuku_recovery_action, (dialog, which) -> restoreServices(true))
+                     .show();
+             return;
+         }
+@@ -62,6 +76,7 @@
+         StandbyCleanupStarter.reactivate(activity, result -> {
+             activating = false;
+             show(result);
++            if (result == StandbyCleanupStarter.Result.ACTIVE) restoreAfterWake();
+         });
+     }
+ 
+--- a/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupStarter.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/StandbyCleanupStarter.java
+@@ -33,6 +33,7 @@
+ import java.util.Date;
+ import java.util.concurrent.CountDownLatch;
+ import java.util.concurrent.TimeUnit;
++import java.util.concurrent.atomic.AtomicBoolean;
+ import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.function.Consumer;
+ 
+@@ -45,6 +46,8 @@
+     enum Result { ACTIVE, INACTIVE, HELPER_UNAVAILABLE, CONNECTION_UNAVAILABLE }
+ 
+     private static final String TAG = "StandbyCleanupStarter";
++    private static final String RECOVER_SHIZUKU = "sh /data/local/tmp/cyt-shizuku-recovery.sh";
++    private static final AtomicBoolean RESTORING = new AtomicBoolean();
+     private static final String HELPER = "/data/local/tmp/cleanyourtv-standby.sh";
+     private static final String MONITOR_RUNNING = "ps -A -o ARGS | grep -Fqx 'sh " + HELPER + "'";
+     private static final String STATUS = MONITOR_RUNNING + " && echo active || echo inactive";
+@@ -54,6 +57,54 @@
+ 
+     static Result status(Context context) {
+         return StandbyCleanupReceiver.enabled(context) ? request(context, false) : Result.INACTIVE;
++    }
++
++    /** Restore the configured helpers after Home or wake using only the already authorized local ADB key. */
++    static void restoreServices(Activity activity, Consumer<Boolean> onResult) {
++        restoreServices(activity.getApplicationContext(), false, ready -> activity.runOnUiThread(() -> {
++            if (!activity.isFinishing() && !activity.isDestroyed()) onResult.accept(ready);
++        }));
++    }
++
++    static void restoreServices(Context context, boolean openHomeAtBoot, Consumer<Boolean> onResult) {
++        if (!identityPrefs(context).contains("private_key") || !RESTORING.compareAndSet(false, true)) {
++            onResult.accept(false);
++            return;
++        }
++        new Thread(() -> {
++            boolean ready = false;
++            try {
++                for (int attempt = 0; attempt < 3 && !ready; attempt++) {
++                    if (attempt > 0) Thread.sleep(attempt * 2000L);
++                    ready = restoreLocal(context, openHomeAtBoot);
++                }
++            } catch (InterruptedException e) {
++                Thread.currentThread().interrupt();
++            } finally {
++                RESTORING.set(false);
++                onResult.accept(ready);
++            }
++        }, "PhilipsServiceRecovery").start();
++    }
++
++    private static boolean restoreLocal(Context context, boolean openHomeAtBoot) {
++        String recovery = RECOVER_SHIZUKU + (openHomeAtBoot ? " --home-if-live" : "");
++        String command = StandbyCleanupReceiver.enabled(context)
++                ? "( " + START + " ) >/dev/null 2>&1; " + recovery
++                : recovery;
++        try (AdbConnection connection = localConnection(context, 5555)) {
++            if (!connection.connect(2, TimeUnit.SECONDS, true)) return false;
++            try (AdbStream stream = connection.open("shell:" + command);
++                 BufferedReader output = new BufferedReader(new InputStreamReader(
++                         stream.openInputStream(), StandardCharsets.UTF_8))) {
++                return "ready".equals(output.readLine());
++            }
++        } catch (InterruptedException e) {
++            Thread.currentThread().interrupt();
++        } catch (Exception e) {
++            Log.d(TAG, "Local service recovery unavailable", e);
++        }
++        return false;
+     }
+ 
+     static void reactivate(Activity activity, Consumer<Result> onResult) {
+@@ -116,13 +167,7 @@
+     }
+ 
+     private static Result requestAt(Context context, int port, int timeoutSeconds, boolean activate) throws Exception {
+-        Identity identity = identity(context);
+-        try (AdbConnection connection = new AdbConnection.Builder("127.0.0.1", port)
+-                .setApi(Build.VERSION.SDK_INT)
+-                .setDeviceName("CleanYourTV")
+-                .setPrivateKey(identity.privateKey())
+-                .setCertificate(identity.certificate())
+-                .build()) {
++        try (AdbConnection connection = localConnection(context, port)) {
+             if (!connection.connect(timeoutSeconds, TimeUnit.SECONDS, !activate)) {
+                 return Result.CONNECTION_UNAVAILABLE;
+             }
+@@ -141,6 +186,16 @@
+             if (activate) Log.i(TAG, "Local debugging connection on port " + port + " is unavailable", e);
+             return Result.CONNECTION_UNAVAILABLE;
+         }
++    }
++
++    private static AdbConnection localConnection(Context context, int port) throws Exception {
++        Identity identity = identity(context);
++        return new AdbConnection.Builder("127.0.0.1", port)
++                .setApi(Build.VERSION.SDK_INT)
++                .setDeviceName("CleanYourTV")
++                .setPrivateKey(identity.privateKey())
++                .setCertificate(identity.certificate())
++                .build();
+     }
+ 
+     private static int findTlsPort(Context context) throws InterruptedException {
+--- a/launcher/app/src/main/res/values-es/strings.xml
++++ b/launcher/app/src/main/res/values-es/strings.xml
+@@ -1,5 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
++    <string name="shizuku_recovery_action">Reactivar servicios</string>
++    <string name="shizuku_recovery_ready">Shizuku está activo</string>
++    <string name="shizuku_recovery_unavailable">Shizuku no ha arrancado. Comprueba la depuración local.</string>
+     <string name="app_name">Inicio</string>
+     <string name="inputs">Entradas</string>
+     <string name="wifi">Wi-Fi</string>
+--- a/launcher/app/src/main/res/values/strings.xml
++++ b/launcher/app/src/main/res/values/strings.xml
+@@ -1,5 +1,8 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
++    <string name="shizuku_recovery_action">Restore services</string>
++    <string name="shizuku_recovery_ready">Shizuku is running</string>
++    <string name="shizuku_recovery_unavailable">Shizuku could not start. Check local debugging.</string>
+     <string name="app_name">Home</string>
+     <string name="inputs">Inputs</string>
+     <string name="wifi">Wi-Fi</string>

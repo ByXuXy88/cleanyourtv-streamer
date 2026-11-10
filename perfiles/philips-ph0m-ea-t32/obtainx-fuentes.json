@@ -1,0 +1,21 @@
+{
+  "apps": [
+    {
+      "url": "https://github.com/yuliskov/SmartTube",
+      "name": "SmartTube Stable",
+      "preferredApkIndex": 0,
+      "id": "org.smarttube.stable",
+      "additionalSettings": "{\"apkFilterRegEx\":\"^SmartTube_stable_[0-9.]+_armeabi-v7a[.]apk$\",\"autoApkFilterByArch\":true,\"includePrereleases\":false}",
+      "author": "yuliskov"
+    },
+    {
+      "url": "https://iptvextreme.org/public/releases/",
+      "overrideSource": "HTML",
+      "name": "IPTV Extreme",
+      "preferredApkIndex": 0,
+      "id": "com.pecana.iptvextreme",
+      "additionalSettings": "{\"exemptFromBackgroundUpdates\":false,\"autoApkFilterByArch\":true,\"versionExtractionRegEx\":\"/([0-9]+)/Free/\",\"allowInsecure\":false,\"includeZips\":false,\"intermediateLink\":[{\"sortByLastLinkSegment\":true,\"customLinkFilterRegex\":\"^https://iptvextreme[.]org/public/releases/[0-9]+/$\",\"reverseSort\":false},{\"customLinkFilterRegex\":\"^https://iptvextreme[.]org/public/releases/[0-9]+/Free/$\",\"reverseSort\":false}],\"matchGroupToUse\":\"1\",\"apkFilterRegEx\":\"app-universal-release[.]apk$\",\"versionDetection\":\"standard\"}",
+      "author": "Pecana"
+    }
+  ]
+}
