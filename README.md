@@ -23,9 +23,9 @@ La imagen del Inicio original es una referencia oficial de Google TV. [Fuente de
 
 | Dispositivo | Recursos | Estado |
 | --- | --- | --- |
-| Google TV Streamer (4K), `kirkwood` | 4 GB de RAM, 32 GB de almacenamiento | Probado en Android 14, compilación `UTTK.260317.003`, con reinicio completo, reactivación local, reposo y aviso. |
-| Chromecast con Google TV (4K), `sabrina` | 2 GB de RAM, 8 GB de almacenamiento | Probado en Android 14, compilación `UTTC.250917.004`, con reinicio, reactivación del chip y aviso al salir de reposo. El firmware necesitó reactivar la depuración inalámbrica tras reiniciar. |
-| Wanbo Cube 1, `BOS` | 1 GB de RAM, Mali-G31, 720p | [Tema ligero y guía de diagnóstico](perfiles/wanbo-cube-1/README.md) para `HP4703-Skyworth`, comprobado antes y después de actualizar de Android 11 a 14. |
+| [Google TV Streamer (4K), `kirkwood`](perfiles/google-tv-streamer-4k/README.md) | 4 GB de RAM, 32 GB de almacenamiento | Probado en Android 14, compilación `UTTK.260317.003`, con reinicio completo, reactivación local, reposo y aviso. |
+| [Chromecast con Google TV (4K), `sabrina`](perfiles/chromecast-google-tv-4k/README.md) | 2 GB de RAM, 8 GB de almacenamiento | Probado en Android 14, compilación `UTTC.250917.004`, con reinicio, reactivación del chip y aviso al salir de reposo. El firmware necesitó reactivar la depuración inalámbrica tras reiniciar. |
+| [Wanbo Cube 1, `BOS`](perfiles/wanbo-cube-1/README.md) | 1 GB de RAM, Mali-G31, 720p | Perfil para `HP4703-Skyworth`, comprobado antes y después de actualizar de Android 11 a 14. La ficha muestra el Inicio actual con banda de cristal. |
 | Philips UHD 2020/2021, `PH0M_EA_T32` | 1,32 GiB de RAM utilizables, MediaTek `m7332`, Mali-G52 | [Perfil Philips](perfiles/philips-ph0m-ea-t32/README.md) probado en Android TV 11, compilación `200715`, con dos filas de cuatro, inicio tras reinicio y Shizuku para ObtainX. |
 
 [Ficha del Streamer](https://store.google.com/product/google_tv_streamer_specs) · [Ficha del Chromecast](https://support.google.com/chromecast/answer/12578818) · [Desmontaje del Chromecast 4K](https://www.techinsights.com/products/ddt-2010-818) · [Notas de firmware](https://support.google.com/chromecast/answer/7124014)

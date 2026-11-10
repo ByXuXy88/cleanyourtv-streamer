@@ -1,10 +1,12 @@
 {
   "background_color": "#0E0F12",
   "wallpaper": false,
-  "dock_row": false,
-  "dock_band": false,
-  "dock_glass": false,
+  "dock_row": true,
+  "dock_band": true,
+  "dock_glass": true,
+  "dock_opacity": 70,
   "dock_title": false,
+  "focus_row_shelf": true,
   "columns": 3,
   "rows_below_dock": 2,
   "dock_apps": [
@@ -21,7 +23,9 @@
   "fill_dock": false,
   "hidden_apps": [
     "com.android.vending",
-    "com.finalwire.aida64"
+    "com.finalwire.aida64",
+    "dev.bikram.obtainx",
+    "flar2.homebutton"
   ],
   "top_menu": false,
   "launcher_settings_button": true,
@@ -36,9 +40,21 @@
   "library_before_wifi": true,
   "show_library_pill": false,
   "library_ok_opens": true,
+  "library_excluded_apps": [
+    "com.pecana.iptvextremepro",
+    "com.nuvio.tv",
+    "org.smarttube.stable",
+    "com.crunchyroll.crunchyroid",
+    "com.disney.disneyplus",
+    "com.netflix.ninja",
+    "com.amazon.amazonvideo.livingroom",
+    "com.wbd.stream",
+    "com.apple.atve.androidtv.appletv",
+    "com.droidlogic.tv.settings"
+  ],
   "module_cards": false,
   "glass_style": "rim",
-  "animations": false,
+  "animations": true,
   "advanced_effects": false,
   "focus_overshoot": false,
   "ambient_glow": false,

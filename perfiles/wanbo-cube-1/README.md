@@ -4,9 +4,11 @@ Perfil ligero de CleanYourTV para el proyector Wanbo Cube 1. La [ficha de Wanbo]
 
 La unidad identificada usa una plataforma Amlogic de Skyworth, producto `HP4703-Skyworth`, dispositivo `BOS`. Tiene 1 GB de RAM, GPU Mali-G31, Android TV 11 de 32 bits (API 30) y salida de 1280 × 720. La compilación observada es `RTT0.210829.002.P2.1.6_20240930`. Comprueba estos datos antes de reutilizar los ajustes en otro proyector.
 
-El [tema](config.json) usa una cuadrícula compacta, un borde fijo para el foco y el cajón de apps junto al Wi-Fi. Apaga las animaciones del launcher, el fondo de imagen, el resplandor y los módulos. AIDA64 y Play Store están en el cajón. El firmware probado deja la entrada HDMI fuera del menú de Android. Se selecciona con el mando del proyector.
+El [tema actualizado](config.json) muestra tres filas y una banda de cristal que se desplaza a la fila seleccionada. Usa animaciones básicas y mantiene apagados los efectos avanzados, el fondo de imagen, el resplandor y los módulos. El cajón queda a la izquierda del Wi-Fi y reúne Button Mapper, ObtainX, AIDA64 y Play Store. Las nueve apps de Inicio no se duplican en el cajón. El acceso de Ajustes del proyector se mantiene en el mando.
 
-![CleanYourTV con nueve aplicaciones en el Wanbo Cube 1](inicio.png)
+![Captura del Wanbo Cube 1 con la banda de cristal en la segunda fila de CleanYourTV](inicio.png)
+
+La captura corresponde al perfil visual probado en Android 14. Para que se vea el desplazamiento de la banda en esta unidad, se dejó `animator_duration_scale` en `0.5`. Los efectos avanzados siguen desactivados.
 
 | Fila | Izquierda | Centro | Derecha |
 | --- | --- | --- | --- |
@@ -35,7 +37,7 @@ adb -s "<dispositivo>" shell pm list packages -d --user 0
 1. Guarda el estado inicial fuera del repositorio. Mide la apertura de Inicio y de una app de prueba, la RAM disponible y el espacio libre. Aplica el tema y repite las mediciones en las mismas condiciones.
 2. Instala CleanYourTV y aplica este tema con la [guía del proyecto](../../README.md#instalar-el-launcher-y-el-tema). Prueba CleanYourTV como app antes de asignarlo al botón Inicio. Comprueba el mando, el acceso a ajustes, el enfoque, la corrección trapezoidal, HDMI, Wi-Fi, audio y la reproducción protegida.
 3. Revisa las apps opcionales y sus procesos en el firmware detectado. Registra el estado original de cada paquete y comprueba el equipo tras cada cambio. Consulta la [guía de reversión](../../INSTALACION-AVANZADA.md).
-4. Comprueba el arranque completo. El perfil de este proyector deja el monitor de reposo apagado para evitar un proceso adicional en segundo plano.
+4. Comprueba el arranque completo. En la unidad actualizada a Android 14 se verificó que el chip puede reactivar el monitor de reposo y quedar verde. El monitor es opcional y se reactiva después de un reinicio completo si lo necesitas.
 
 ## Cambios probados
 
@@ -56,7 +58,7 @@ Tras probar el nuevo Inicio, se quitaron para el usuario 0 los paquetes de la ta
 
 Para recuperar una app de sistema, ejecuta `adb -s "<dispositivo>" shell cmd package install-existing --user 0 <paquete>` y `adb -s "<dispositivo>" shell pm default-state --user 0 <paquete>`. Para restaurar el Inicio original, recupera primero el launcher y sus recomendaciones, luego selecciona `com.google.android.tvlauncher/.MainActivity`. Downloader se puede reinstalar desde Play Store. El asistente de configuración, Play Services, el receptor Cast, el emparejamiento Bluetooth y los servicios del proyector se dejaron habilitados.
 
-Las escalas `window_animation_scale`, `transition_animation_scale` y `animator_duration_scale` pasaron de 0,5 a 0. El salvapantallas de Android se desactivó con `settings put secure screensaver_enabled 0`. Guarda tus valores originales con `settings get` antes de aplicar estos cambios para poder recuperarlos.
+Durante la medición inicial, las tres escalas de animación pasaron de 0,5 a 0. En el perfil visual posterior se recuperó `animator_duration_scale=0.5` y se conservaron las transiciones de ventanas y actividades en 0. El salvapantallas de Android se desactivó con `settings put secure screensaver_enabled 0`. Guarda tus valores originales con `settings get` antes de aplicar estos cambios para poder recuperarlos.
 
 ## Mantener la pantalla encendida
 
